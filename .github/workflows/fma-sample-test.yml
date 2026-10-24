@@ -1,0 +1,140 @@
+name: FMA 100-song pipeline test
+
+# Runs the full feature pipeline on the 100 Creative Commons songs in ci/fma_sample/manifest.csv:
+#   1. models   - install once and cache all model weights (~5 GB)
+#   2. features - 20 parallel jobs, 5 songs each (songfeatures run --shard K/20)
+#   3. merge    - combine shards, corpus features, report; uploads the "fma-sample-results" artifact
+# Start it from the Actions tab ("Run workflow"), or by pushing to the ci/fma-sample-test branch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/fma-sample-test]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fma-sample-test-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.13"
+  SHARDS: "20"
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+  TORCH_HOME: ${{ github.workspace }}/.cache/torch
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+  TF_CPP_MIN_LOG_LEVEL: "2"
+
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ci/requirements-ci.txt
+      - name: Restore model cache
+        id: models
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/huggingface
+            .cache/torch
+            models/essentia
+          key: songfeatures-models-${{ hashFiles('ci/config_ci.yaml', 'songfeatures/features/essentia_models.py') }}
+      - name: Install
+        run: bash ci/install.sh
+      - name: Download model weights
+        if: steps.models.outputs.cache-hit != 'true'
+        run: python -m songfeatures download-models --config ci/config_ci.yaml
+      - name: Show cached models
+        run: du -sh .cache/huggingface .cache/torch models/essentia || true
+
+  features:
+    needs: models
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ci/requirements-ci.txt
+      - name: Restore model cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .cache/huggingface
+            .cache/torch
+            models/essentia
+          key: songfeatures-models-${{ hashFiles('ci/config_ci.yaml', 'songfeatures/features/essentia_models.py') }}
+          fail-on-cache-miss: true
+      - name: Install
+        run: bash ci/install.sh
+      - name: Download this shard's songs (verified by SHA-256)
+        run: python ci/fetch_fma_sample.py --manifest ci/fma_sample/manifest.csv --shard ${{ matrix.shard }}/${{ env.SHARDS }}
+      - name: Extract features
+        run: |
+          # pipefail is on in GitHub's bash, so a crash of the pipeline still fails this step
+          python -m songfeatures run --manifest ci/fma_sample/manifest.csv --out results \
+            --config ci/config_ci.yaml --workers "$(nproc)" --shard ${{ matrix.shard }}/${{ env.SHARDS }} 2>&1 \
+            | (grep -v -E "TensorflowPredict: Successfully loaded|dso_loader|cuda_driver|cudart_stub" || true)
+          test -d results/cache
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            results/
+            !results/artifacts/**/stems/**
+          retention-days: 7
+          if-no-files-found: warn
+
+  merge:
+    needs: features
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ci/requirements-ci.txt
+      - name: Install
+        run: bash ci/install.sh
+      - name: Collect shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: results
+          merge-multiple: true
+      - name: Merge, corpus features, codebook
+        run: python -m songfeatures merge --manifest ci/fma_sample/manifest.csv --out results --config ci/config_ci.yaml
+      - name: Report
+        run: |
+          python ci/report_fma_sample.py results ci/fma_sample/manifest.csv results/report
+          cat results/report/RUN_REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: fma-sample-results
+          path: |
+            results/features.csv
+            results/codebook.csv
+            results/errors.csv
+            results/run_info.json
+            results/corpus_features.csv
+            results/report/
+          retention-days: 30

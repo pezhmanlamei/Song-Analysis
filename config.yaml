@@ -1,0 +1,105 @@
+# songfeatures configuration. Anything omitted falls back to the defaults in
+# songfeatures/pipeline.py (DEFAULTS). Record this file with your results: run_info.json
+# also stores the full effective config and library versions for reproducibility.
+
+general:
+  min_duration_s: 10        # shorter files are rejected
+  device: auto              # auto | cpu | cuda   (Demucs, Whisper, CLAP, Beat This!)
+  chroma_method: auto       # auto (Essentia HPCP if installed) | hpcp | cqt (librosa)
+  chroma_source: mix        # mix | harmonic (HPSS harmonic layer)
+  beat_tracker: librosa     # librosa | beat_this  (beat_this = neural beats + downbeats; recommended
+                            # for off-beat-heavy styles such as reggae/funk; needs torch + beat_this)
+
+modules:                    # switch whole feature families on/off
+  loudness: true
+  timbre: true
+  rhythm: true
+  harmony: true
+  structure: true
+  vocals: true              # Demucs separation + vocal features (GPU strongly recommended)
+  voice_quality: true       # openSMILE eGeMAPS on the vocal stem
+  lyrics: true              # Whisper transcription (or provided lyrics_path files)
+  essentia_models: true     # emotion/mood/genre/instrument models (CC BY-NC-SA weights)
+  clap: true                # zero-shot concept scores
+  surprise: true            # corpus-level harmonic/melodic expectation
+  novelty: true             # corpus-level typicality/novelty
+  open_features: true       # open_* columns: open-source equivalents of Spotify's 13 audio features
+
+rhythm:
+  meter_margin: 0.1         # triple-vs-duple periodicity margin required to call a song 3/4
+  meter_backend: null       # beat_this: fill beats_per_bar with Beat This! downbeats (other rhythm features unchanged)
+
+loudness:
+  true_peak: true
+
+harmony:
+  key_method: auto          # auto (Essentia KeyExtractor if installed) | essentia | profile
+  essentia_key_profile: bgate   # bgate | edma | temperley | krumhansl | shaath | noland ...
+  key_profile: krumhansl    # profile used for local keys / key clarity: krumhansl | temperley
+  key_window_beats: 16
+  key_hop_beats: 4
+  key_self_transition: 0.9
+  key_min_windows: 3
+  chord_self_transition: 0.6
+
+structure:
+  backend: laplacian        # laplacian (default, no extra deps) | allin1 (learned labels; needs allin1 + NATTEN)
+  n_section_types: auto     # auto (eigengap, 3-8) or an integer
+  min_section_beats: 8
+  drop_db: 6.0
+
+vocals:
+  demucs_model: htdemucs    # htdemucs | htdemucs_ft (slower, slightly better)
+  demucs_repo: null         # optional local folder with Demucs checkpoints (<sig>-<sha>.th + <model>.yaml),
+                            # for clusters without internet or when dl.fbaipublicfiles.com is blocked
+  demucs_shifts: 1          # 0 = fastest; higher = better quality, slower
+  keep_stems: vocals        # vocals | all | none  (saved as FLAC under results/artifacts/<id>/stems)
+  vocal_rel_db: -15.0       # vocal frame counts as active if within 15 dB of the mix level...
+  vocal_abs_db: -50.0       # ...and above -50 dBFS
+  pitch: true
+  speech_sung_threshold: 0.2  # 2-s vocal window is speech-like if < 20% of it is in sustained pitched notes
+  voice_gate: auto          # auto: a frame is vocal only if the Essentia voice/instrumental classifier also
+                            # hears a voice (>= voice_gate_threshold); removes instrument bleed in the vocal stem
+  voice_gate_threshold: 0.5
+
+voice_quality:
+  min_vocal_seconds: 5.0
+
+lyrics:
+  transcribe: true
+  whisper_model: large-v3   # large-v3 (GPU) | medium | small (CPU-friendly)
+  language: null            # null = auto-detect; or e.g. "en", "tr"
+  max_no_speech_prob: 0.6
+  min_avg_logprob: -1.0
+
+essentia_models:
+  essentia_model_dir: models/essentia
+  heads: null               # null = all; or a list, e.g. [deam, mood_happy, genre]
+
+clap:
+  clap_model: laion/larger_clap_general   # do NOT use laion/larger_clap_music: its HF checkpoint is broken
+                                          # (text embeddings collapse; every prompt scores the same)
+  chunk_s: 10.0
+  temperature: 100.0        # used for prompt-vs-contrast probabilities when the checkpoint has no trained scale
+  concepts:                 # your theory-driven constructs; validate against human ratings
+    - {name: happy,      prompt: "a happy, cheerful song",            contrast: "a sad, melancholic song"}
+    - {name: energetic,  prompt: "an energetic, intense song",        contrast: "a calm, gentle song"}
+    - {name: nostalgic,  prompt: "a nostalgic, sentimental song",     contrast: "a modern, futuristic song"}
+    - {name: cinematic,  prompt: "a cinematic, epic song",            contrast: "an intimate, minimal song"}
+    - {name: romantic,   prompt: "a romantic love song",              contrast: "a song about partying"}
+    - {name: dark,       prompt: "a dark, ominous song",              contrast: "a bright, uplifting song"}
+    - {name: lofi,       prompt: "a lo-fi recording",                 contrast: "a polished, high-fidelity studio production"}
+    - {name: live,       prompt: "a live concert recording with audience", contrast: "a studio recording"}
+    - {name: acoustic,   prompt: "an acoustic song with acoustic instruments", contrast: "an electronic song with synthesizers"}
+    - {name: catchy,     prompt: "a catchy song with a memorable hook", contrast: "an experimental song without a clear melody"}
+
+surprise:
+  chord_order: 3            # n-gram order (context of 2 previous chords)
+  melody_order: 3
+  alpha: 0.05
+  min_corpus_songs: 20
+
+novelty:
+  period_window_years: 1    # contemporaries = released within +/- 1 year
+  knn: 10
+  min_corpus_songs: 20

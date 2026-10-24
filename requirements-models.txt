@@ -1,0 +1,11 @@
+# Deep-learning modules: vocals (Demucs), lyrics (Whisper), clap (CLAP). A CUDA GPU is
+# strongly recommended for thousands of songs. Install torch first, matching your CUDA
+# version (see https://pytorch.org/get-started/locally/), then:
+torch>=2.1
+torchaudio>=2.1
+demucs>=4.0.1
+faster-whisper>=1.0
+transformers>=4.40
+# Optional extras:
+#   pip install git+https://github.com/CPJKU/beat_this.git     # neural beats + downbeats (beat_tracker: beat_this)
+#   pip install allin1 natten                                  # learned structure labels (structure.backend: allin1)

@@ -1,0 +1,106 @@
+# Configuration for the 100-song FMA test on GitHub Actions (CPU runners).
+# Same settings as the validated full run, except: Demucs weights download normally (no local mirror),
+# only vocal stems are kept (needed by voice_quality/lyrics), Beat This! fills beats_per_bar,
+# and the corpus stage uses the default minimum of 20 songs.
+general:
+  min_duration_s: 10
+  device: cpu
+  chroma_method: auto
+  chroma_source: mix
+  beat_tracker: librosa
+modules:
+  loudness: true
+  timbre: true
+  rhythm: true
+  harmony: true
+  structure: true
+  vocals: true
+  voice_quality: true
+  lyrics: true
+  essentia_models: true
+  clap: true
+  surprise: true
+  novelty: true
+  open_features: true
+rhythm:
+  meter_margin: 0.1
+  meter_backend: beat_this
+loudness:
+  true_peak: true
+harmony:
+  key_method: auto
+  essentia_key_profile: bgate
+  key_profile: krumhansl
+  key_window_beats: 16
+  key_hop_beats: 4
+  key_self_transition: 0.9
+  key_min_windows: 3
+  chord_self_transition: 0.6
+structure:
+  backend: laplacian
+  n_section_types: auto
+  min_section_beats: 8
+  drop_db: 6.0
+vocals:
+  demucs_model: htdemucs_ft
+  demucs_shifts: 1
+  keep_stems: vocals
+  vocal_rel_db: -15.0
+  vocal_abs_db: -50.0
+  pitch: true
+  speech_sung_threshold: 0.2
+voice_quality:
+  min_vocal_seconds: 5.0
+lyrics:
+  transcribe: true
+  whisper_model: large-v3
+  language: null
+  max_no_speech_prob: 0.6
+  min_avg_logprob: -1.0
+essentia_models:
+  essentia_model_dir: models/essentia
+  heads: null
+clap:
+  clap_model: laion/larger_clap_general
+  chunk_s: 10.0
+  temperature: 100.0
+  concepts:
+  - name: happy
+    prompt: a happy, cheerful song
+    contrast: a sad, melancholic song
+  - name: energetic
+    prompt: an energetic, intense song
+    contrast: a calm, gentle song
+  - name: nostalgic
+    prompt: a nostalgic, sentimental song
+    contrast: a modern, futuristic song
+  - name: cinematic
+    prompt: a cinematic, epic song
+    contrast: an intimate, minimal song
+  - name: romantic
+    prompt: a romantic love song
+    contrast: a song about partying
+  - name: dark
+    prompt: a dark, ominous song
+    contrast: a bright, uplifting song
+  - name: lofi
+    prompt: a lo-fi recording
+    contrast: a polished, high-fidelity studio production
+  - name: live
+    prompt: a live concert recording with audience
+    contrast: a studio recording
+  - name: acoustic
+    prompt: an acoustic song with acoustic instruments
+    contrast: an electronic song with synthesizers
+  - name: catchy
+    prompt: a catchy song with a memorable hook
+    contrast: an experimental song without a clear melody
+surprise:
+  chord_order: 3
+  melody_order: 3
+  alpha: 0.05
+  min_corpus_songs: 20
+novelty:
+  period_window_years: 1
+  knn: 10
+  min_corpus_songs: 20

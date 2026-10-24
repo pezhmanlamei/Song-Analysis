@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+results/
+results_*/
+models/
+.cache/
+ci/fma_sample/audio/
+*.mp3
+*.wav
+*.flac
