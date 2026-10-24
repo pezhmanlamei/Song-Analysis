@@ -247,7 +247,9 @@ def _set_threads(n: int):
     """Process initializer: thread count for BLAS/OpenMP/numba/torch in this process."""
     import faulthandler
     faulthandler.enable()   # a native crash (segfault) prints the Python stack to stderr
-    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
+    # NUMBA_NUM_THREADS is deliberately left alone: setting it in pool workers made numba's gufuncs
+    # (librosa beat tracking) segfault on GitHub's AMD EPYC runners.
+    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ[v] = str(n)
 
 

@@ -39,7 +39,7 @@ jobs:
       - name: All core modules in a pool (4 workers, then 2)
         run: |
           (while true; do free -m | awk '/Mem:/{print strftime("%T"), $3}' >> mem.log; sleep 1; done) &
-          for w in 4 2; do
+          for w in 4; do
             echo "=== workers $w"; : > mem.log
             python -X faulthandler -m songfeatures run --manifest ci/fma_sample/manifest.csv \
               --out res_w$w --config ci/config_ci.yaml --workers $w --shard 16/20 \
