@@ -197,6 +197,7 @@ def run(manifest_df: pd.DataFrame, out_dir: str, cfg: dict, workers: int = 1, mo
     if core:
         log(f"Pass 1: {', '.join(core)} on {len(rows)} tracks with {workers} worker(s)")
         if workers > 1:
+            _warm_numba_cache(core, cfg, log)
             errors += _core_pool(rows, core, cfg, str(out), force, workers)
         else:
             for r in _progress(rows, len(rows), "core"):
@@ -247,9 +248,7 @@ def _set_threads(n: int):
     """Process initializer: thread count for BLAS/OpenMP/numba/torch in this process."""
     import faulthandler
     faulthandler.enable()   # a native crash (segfault) prints the Python stack to stderr
-    # NUMBA_NUM_THREADS is deliberately left alone: setting it in pool workers made numba's gufuncs
-    # (librosa beat tracking) segfault on GitHub's AMD EPYC runners.
-    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
         os.environ[v] = str(n)
 
 
@@ -266,6 +265,30 @@ def _mark_crashed(out: str, row: dict, modules: list[str]):
         if state["modules"].get(m, {}).get("status") != "ok":
             state["modules"][m] = {"status": "error", "error": CRASH_MSG}
     _save_state(cpath, state)
+
+
+def _warm_numba_cache(core: list[str], cfg: dict, log=print):
+    """librosa compiles its numba functions with cache=True. On a fresh machine several pool workers would
+    compile and write the same cache files at once, and a worker can then load a half-written file and
+    segfault (seen in numba's localmax gufunc on GitHub runners). Running the core modules once here, in
+    the parent process, on 30 s of synthetic audio writes every cache file before the workers start."""
+    import tempfile
+    import soundfile as sf
+    t0 = time.time()
+    rng = np.random.default_rng(0)
+    sr, n = 44100, 44100 * 30
+    t = np.arange(n) / sr
+    y = 0.1 * rng.standard_normal(n) * (np.sin(2 * np.pi * 2 * t) > 0.9)     # clicks at 120 bpm
+    y += 0.2 * np.sin(2 * np.pi * 220 * t) + 0.1 * np.sin(2 * np.pi * 330 * t)
+    with tempfile.TemporaryDirectory() as d:
+        sf.write(f"{d}/warmup.wav", np.stack([y, y], 1).astype(np.float32), sr)
+        try:
+            res = process_track({"track_id": "warmup", "audio_path": f"{d}/warmup.wav"}, core, cfg, d, True)
+            if res["errors"]:
+                log(f"numba warm-up: {len(res['errors'])} module(s) failed on the synthetic clip: {res['errors'][0]}")
+        except Exception as e:   # warm-up is best effort
+            log(f"numba warm-up skipped: {e}")
+    log(f"numba cache warmed in {time.time() - t0:.0f} s")
 
 
 def _pool(n_workers: int, n_threads: int):
