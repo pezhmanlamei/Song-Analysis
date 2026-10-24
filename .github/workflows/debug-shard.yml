@@ -22,15 +22,17 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: ci/requirements-ci.txt
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache@v4
+        id: models
         with:
           path: |
             .cache/huggingface
             .cache/torch
             models/essentia
           key: songfeatures-models-${{ hashFiles('ci/config_ci.yaml', 'songfeatures/features/essentia_models.py') }}
-          fail-on-cache-miss: true
       - run: bash ci/install.sh
+      - if: steps.models.outputs.cache-hit != 'true'
+        run: python -m songfeatures download-models --config ci/config_ci.yaml
       - run: python ci/fetch_fma_sample.py --manifest ci/fma_sample/manifest.csv --shard 16/20
       - name: Machine
         run: nproc; free -m; lscpu | grep -E "Model name|Flags" | cut -c1-300
