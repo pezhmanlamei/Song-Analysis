@@ -36,16 +36,17 @@ jobs:
       - run: python ci/fetch_fma_sample.py --manifest ci/fma_sample/manifest.csv --shard 16/20
       - name: Machine
         run: nproc; free -m; lscpu | grep -E "Model name|Flags" | cut -c1-300
-      - name: Each core module alone, one song, one process
+      - name: All core modules in a pool (4 workers, then 2)
         run: |
           (while true; do free -m | awk '/Mem:/{print strftime("%T"), $3}' >> mem.log; sleep 1; done) &
-          for m in loudness timbre rhythm harmony structure; do
-            echo "=== $m"
-            /usr/bin/time -v python -X faulthandler -m songfeatures run --manifest ci/fma_sample/manifest.csv \
-              --out res_$m --config ci/config_ci.yaml --workers 1 --shard 16/20 --modules $m 2>&1 \
-              | grep -E -v "TensorflowPredict|dso_loader" | tail -40 || true
+          for w in 4 2; do
+            echo "=== workers $w"; : > mem.log
+            python -X faulthandler -m songfeatures run --manifest ci/fma_sample/manifest.csv \
+              --out res_w$w --config ci/config_ci.yaml --workers $w --shard 16/20 \
+              --modules loudness,timbre,rhythm,harmony,structure 2>&1 \
+              | grep -E -v "TensorflowPredict|dso_loader|it/s\]" | tail -60 || true
+            echo "peak used MB with $w workers: $(sort -k2 -n mem.log | tail -1)"
           done
-          sort -k2 -n mem.log | tail -1
       - name: Kernel log
         if: always()
-        run: sudo dmesg | tail -30 || true
+        run: sudo dmesg -T | grep -i -E "oom|killed|segfault|trap" | tail -20 || true

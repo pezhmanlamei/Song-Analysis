@@ -194,16 +194,10 @@ def run(manifest_df: pd.DataFrame, out_dir: str, cfg: dict, workers: int = 1, mo
     started = datetime.now(timezone.utc).isoformat()
     errors = []
 
-    import multiprocessing as mp
     if core:
         log(f"Pass 1: {', '.join(core)} on {len(rows)} tracks with {workers} worker(s)")
         if workers > 1:
-            # one BLAS/OpenMP thread per worker process (set only for the workers, not this process)
-            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"),
-                                     initializer=_set_threads, initargs=(1,)) as ex:
-                futs = [ex.submit(process_track, r, core, cfg, str(out), force) for r in rows]
-                for f in _progress(as_completed(futs), len(futs), "core"):
-                    errors += [(f.result()["track_id"], *e) for e in f.result()["errors"]]
+            errors += _core_pool(rows, core, cfg, str(out), force, workers)
         else:
             for r in _progress(rows, len(rows), "core"):
                 errors += [(r["track_id"], *e) for e in process_track(r, core, cfg, str(out), force)["errors"]]
@@ -214,9 +208,7 @@ def run(manifest_df: pd.DataFrame, out_dir: str, cfg: dict, workers: int = 1, mo
             f"{', each in a fresh process' if isolate else ', then released'})")
         for m in model:
             if isolate:   # all memory of the previous model is returned to the OS; all CPU cores
-                with ProcessPoolExecutor(max_workers=1, mp_context=mp.get_context("spawn"),
-                                         initializer=_set_threads, initargs=(os.cpu_count() or 1,)) as ex:
-                    errors += ex.submit(_model_step, rows, m, cfg, str(out), force).result()
+                errors += _model_step_isolated(rows, m, cfg, str(out), force, log)
             else:
                 errors += _model_step(rows, m, cfg, str(out), force)
                 release_models(m)
@@ -253,8 +245,81 @@ def run(manifest_df: pd.DataFrame, out_dir: str, cfg: dict, workers: int = 1, mo
 
 def _set_threads(n: int):
     """Process initializer: thread count for BLAS/OpenMP/numba/torch in this process."""
+    import faulthandler
+    faulthandler.enable()   # a native crash (segfault) prints the Python stack to stderr
     for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
         os.environ[v] = str(n)
+
+
+CRASH_MSG = ("WorkerCrashed: the worker process died on this song (out of memory or a fault in a native "
+             "library); the other songs were not affected")
+
+
+def _mark_crashed(out: str, row: dict, modules: list[str]):
+    """Record a crash in the song's cache so it shows up in errors.csv / module_status."""
+    cpath = _cache_path(Path(out), str(row["track_id"]))
+    state = _load_state(cpath)
+    state.update(track_id=str(row["track_id"]), audio_path=row["audio_path"])
+    for m in modules:
+        if state["modules"].get(m, {}).get("status") != "ok":
+            state["modules"][m] = {"status": "error", "error": CRASH_MSG}
+    _save_state(cpath, state)
+
+
+def _pool(n_workers: int, n_threads: int):
+    import multiprocessing as mp
+    return ProcessPoolExecutor(max_workers=n_workers, mp_context=mp.get_context("spawn"),
+                               initializer=_set_threads, initargs=(n_threads,))
+
+
+def _core_pool(rows, core, cfg, out, force, workers) -> list:
+    """Pass 1 in a process pool (1 thread per worker). If a worker dies, the songs that had not finished
+    are retried one at a time, each in its own process, so one bad song cannot take down the others."""
+    from concurrent.futures.process import BrokenProcessPool
+    errors, done = [], set()
+    try:
+        with _pool(workers, 1) as ex:
+            futs = {ex.submit(process_track, r, core, cfg, out, force): r for r in rows}
+            for f in _progress(as_completed(futs), len(futs), "core"):
+                res = f.result()
+                done.add(res["track_id"])
+                errors += [(res["track_id"], *e) for e in res["errors"]]
+    except BrokenProcessPool:
+        left = [r for r in rows if str(r["track_id"]) not in done]
+        print(f"A worker process died; retrying {len(left)} song(s) one at a time", flush=True)
+        for r in left:
+            try:
+                with _pool(1, os.cpu_count() or 1) as ex:
+                    res = ex.submit(process_track, r, core, cfg, out, force).result()
+                errors += [(res["track_id"], *e) for e in res["errors"]]
+            except BrokenProcessPool:
+                _mark_crashed(out, r, core)
+                errors.append((str(r["track_id"]), "core", CRASH_MSG))
+    return errors
+
+
+def _model_step_isolated(rows, m, cfg, out, force, log) -> list:
+    """One model module over all songs in a fresh process (all CPU threads). Songs run in order and each
+    result is cached at once, so after a crash the song being processed is the first unfinished one:
+    it is marked as crashed and the step restarts in a new process with the remaining songs."""
+    from concurrent.futures.process import BrokenProcessPool
+    errors, todo = [], list(rows)
+    while todo:
+        try:
+            with _pool(1, os.cpu_count() or 1) as ex:
+                errors += ex.submit(_model_step, todo, m, cfg, out, force).result()
+            break
+        except BrokenProcessPool:
+            pending = [r for r in todo if _load_state(_cache_path(Path(out), str(r["track_id"])))
+                       ["modules"].get(m, {}).get("status") not in ("ok", "error")]
+            if not pending:
+                break
+            bad = pending[0]
+            log(f"{m}: worker died on {bad['track_id']}; marking it and continuing with {len(pending) - 1} song(s)")
+            _mark_crashed(out, bad, [m])
+            errors.append((str(bad["track_id"]), m, CRASH_MSG))
+            todo = pending[1:]
+    return errors
 
 
 def _model_step(rows: list[dict], m: str, cfg: dict, out: str, force: bool) -> list:
