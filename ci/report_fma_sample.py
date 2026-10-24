@@ -57,31 +57,37 @@ def main(res: Path, manifest: Path, out: Path):
     # ---- checks against FMA labels
     d = f.merge(man[["track_id", "genre", "fma_language", "fma_instrumental_flag", "album_title", "fma_listens"]],
                 on="track_id", how="left", suffixes=("", "_man"))
+    d = d[d.track_id.isin(status.track_id[(status[MODULES] == "ok").any(axis=1)])]   # songs actually processed
+    lines += [f"Label checks below use the {len(d)} processed songs.", ""]
     checks = []
     flagged = d[d.fma_instrumental_flag == 1]
-    if len(flagged) and "is_instrumental" in d:
+    if "is_instrumental" in d and flagged.is_instrumental.notna().any():
+        fl = flagged[flagged.is_instrumental.notna()]
         checks.append(("FMA-flagged instrumental songs detected as instrumental by separation",
-                       f"{int((flagged.is_instrumental == 1).sum())}/{len(flagged)}"))
-        if "voice_prob" in d:
+                       f"{int((fl.is_instrumental == 1).sum())}/{len(fl)}"))
+        if "voice_prob" in d and flagged.voice_prob.notna().any():
+            fl = flagged[flagged.voice_prob.notna()]
             checks.append(("... and by the Essentia voice model (p < 0.5)",
-                           f"{int((flagged.voice_prob < 0.5).sum())}/{len(flagged)}"))
+                           f"{int((fl.voice_prob < 0.5).sum())}/{len(fl)}"))
     if "lyrics_language" in d:
         both = d[d.fma_language.notna() & d.lyrics_language.notna() & (d.lyrics_source == "whisper")]
         if len(both):
             checks.append(("Whisper language = FMA language tag (songs with both)",
                            f"{int((both.lyrics_language == both.fma_language).sum())}/{len(both)}"))
-    if "genre_parent_top1" in d:
-        exp = d.genre.map(GENRE_TO_DISCOGS)
+    if "genre_parent_top1" in d and d.genre_parent_top1.notna().any():
+        dg = d[d.genre_parent_top1.notna()]
+        exp = dg.genre.map(GENRE_TO_DISCOGS)
         checks.append(("Essentia top genre matches the FMA genre",
-                       f"{int((d.genre_parent_top1 == exp).sum())}/{len(d)}"))
-        acc = (d.assign(hit=(d.genre_parent_top1 == exp)).groupby("genre").hit.mean().round(2).to_dict())
+                       f"{int((dg.genre_parent_top1 == exp).sum())}/{len(dg)}"))
+        acc = (dg.assign(hit=(dg.genre_parent_top1 == exp)).groupby("genre").hit.mean().round(2).to_dict())
         checks.append(("... per FMA genre", ", ".join(f"{k} {v:.0%}" for k, v in acc.items())))
     if "clap_ref_live_margin" in d:
-        live = d.album_title.fillna("").str.contains(r"\blive\b", case=False)
+        dc = d[d.clap_ref_live_margin.notna()]
+        live = dc.album_title.fillna("").str.contains(r"\blive\b", case=False)
         if live.any() and (~live).any():
             checks.append(("CLAP live-vs-studio margin, albums titled 'Live' vs others (higher = more live)",
-                           f"{d[live].clap_ref_live_margin.mean():.3f} (n={int(live.sum())}) vs "
-                           f"{d[~live].clap_ref_live_margin.mean():.3f} (n={int((~live).sum())})"))
+                           f"{dc[live].clap_ref_live_margin.mean():.3f} (n={int(live.sum())}) vs "
+                           f"{dc[~live].clap_ref_live_margin.mean():.3f} (n={int((~live).sum())})"))
     if "time_signature_est" in d and "beats_per_bar" in d:
         both = d[d.beats_per_bar.notna() & d.time_signature_est.notna()]
         if len(both):
@@ -89,7 +95,7 @@ def main(res: Path, manifest: Path, out: Path):
                            f"{int((both.beats_per_bar == both.time_signature_est).sum())}/{len(both)}"))
     if "vocal_detectors_disagree" in d:
         checks.append(("Songs where separation and the voice model disagree on vocals (listen to these)",
-                       f"{int((d.vocal_detectors_disagree == 1).sum())}/{len(d)}"))
+                       f"{int((d.vocal_detectors_disagree == 1).sum())}/{int(d.vocal_detectors_disagree.notna().sum())}"))
     pd.DataFrame(checks, columns=["check", "result"]).to_csv(out / "label_checks.csv", index=False)
     lines += ["## Checks against FMA labels", "", "| check | result |", "|---|---|"] + \
              [f"| {c} | {r} |" for c, r in checks] + ["",
@@ -99,7 +105,7 @@ def main(res: Path, manifest: Path, out: Path):
     keep = [c for c in ["tempo_bpm", "loudness_integrated_lufs", "open_energy", "open_danceability", "open_valence",
                         "open_acousticness", "open_instrumentalness", "open_speechiness", "vocal_presence_ratio",
                         "chord_change_rate_per_min", "n_sections"] if c in d]
-    g = d.groupby("genre")[keep].median().round(2)
+    g = d.groupby("genre")[keep].median().round(2).dropna(how="all")
     g.to_csv(out / "genre_medians.csv")
     lines += ["## Median of selected features by genre", "", g.to_markdown() if hasattr(g, "to_markdown") else g.to_string(), ""]
     (out / "RUN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
