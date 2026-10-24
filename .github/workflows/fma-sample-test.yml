@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash   # explicit bash = "bash -eo pipefail", so a crash inside a pipe fails the step
+
 concurrency:
   group: fma-sample-test-${{ github.ref }}
   cancel-in-progress: false
@@ -84,7 +88,6 @@ jobs:
         run: python ci/fetch_fma_sample.py --manifest ci/fma_sample/manifest.csv --shard ${{ matrix.shard }}/${{ env.SHARDS }}
       - name: Extract features
         run: |
-          # pipefail is on in GitHub's bash, so a crash of the pipeline still fails this step
           python -m songfeatures run --manifest ci/fma_sample/manifest.csv --out results \
             --config ci/config_ci.yaml --workers "$(nproc)" --shard ${{ matrix.shard }}/${{ env.SHARDS }} 2>&1 \
             | (grep -v -E "TensorflowPredict: Successfully loaded|dso_loader|cuda_driver|cudart_stub" || true)
