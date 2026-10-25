@@ -86,6 +86,17 @@ def main():
     check("song_b is 4/4", b["time_signature_est"] == 4, f"margin {b['meter_triple_margin']:.2f}")
     _, w = features(d / "song_waltz.wav")
     check("synthetic waltz is 3/4", w["time_signature_est"] == 3, f"margin {w['meter_triple_margin']:.2f}")
+    from songfeatures.features.rhythm import meter_from_downbeats
+    rng = np.random.default_rng(0)
+    bt = np.arange(400) * 0.5 + rng.normal(0, 0.01, 400)
+    m4, c4 = meter_from_downbeats(bt, bt[::4])
+    m3, _ = meter_from_downbeats(bt, bt[1::3])
+    noisy = np.sort(np.r_[bt[::4], rng.choice(bt, 60, replace=False)])          # 60% extra false downbeats
+    mn, cn = meter_from_downbeats(bt, noisy)
+    gap = np.delete(bt, [50, 51, 200])                                            # dropped beats
+    mg, _ = meter_from_downbeats(gap, bt[::4])
+    check("downbeat meter: 4/4, 3/4, noisy 4/4, dropped beats", (m4, m3, mn, mg) == (4, 3, 4, 4),
+          f"{m4} {m3} {mn} {mg}; conf clean {c4:.2f} noisy {cn:.2f}")
 
     print("speech vs singing")
     check("sung vocal is not speech-like", v["speech_like_vocal_share"] < 0.1, f"{v['speech_like_vocal_share']:.2f}")

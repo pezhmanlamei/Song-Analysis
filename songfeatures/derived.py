@@ -35,7 +35,8 @@ FEATURES = {
     "open_key": ("Key pitch class, 0 = C ... 11 = B, -1 if undetected (Spotify key)", "0-11"),
     "open_mode": ("1 = major, 0 = minor (Spotify mode)", "0/1"),
     "open_loudness": ("Integrated loudness (Spotify loudness is an average dB level; here ITU-R BS.1770 LUFS)", "dB/LUFS"),
-    "open_time_signature": ("Beats per bar (Spotify time_signature): Beat This! downbeats if available, else time_signature_est (3 or 4)", "beats"),
+    "open_time_signature": ("Beats per bar on Spotify's 3-7 scale: Beat This! downbeats when the bar grid is clear "
+                            "(confidence >= 0.5; 2 beats per bar reported as 4), else time_signature_est (3 or 4)", "beats"),
     "open_danceability": ("Danceability 0-1: Essentia danceability classifier probability; fallback DFA danceability / 3 (clipped)", "0-1"),
     "open_energy": ("Energy 0-1: mean of 5 signal components (loudness, onset rate, >2 kHz energy share, "
                     "inverse loudness range, spectral flatness; fixed ranges) averaged with model arousal when available", "0-1"),
@@ -49,6 +50,14 @@ FEATURES = {
     "open_sources": ("Source used for each open_* feature for this song", "text"),
 }
 PATTERNS: list = []
+
+
+def _spotify_meter(row: dict) -> float:
+    """beats_per_bar on Spotify's 3-7 time_signature scale; NaN (-> fall back) when the bar grid is unclear."""
+    b, c = _f(row, "beats_per_bar"), _f(row, "beats_per_bar_confidence")
+    if not (math.isfinite(b) and math.isfinite(c)) or c < 0.5:
+        return math.nan
+    return 4.0 if b == 2 else b
 
 
 def _f(row: dict, key: str) -> float:
@@ -101,7 +110,7 @@ def spotify_equivalents(row: dict) -> dict:
     out["open_loudness"] = _f(row, "loudness_integrated_lufs")
 
     out["open_time_signature"], src["time_signature"] = _first(row, [
-        ("beat_this_downbeats", lambda r: _f(r, "beats_per_bar")),
+        ("beat_this_downbeats", lambda r: _spotify_meter(r)),
         ("periodicity_estimate", lambda r: _f(r, "time_signature_est"))])
 
     out["open_danceability"], src["danceability"] = _first(row, [

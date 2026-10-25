@@ -24,7 +24,7 @@ INFO = {
 }
 FEATURES = {
     "lyrics_source": ("provided file or whisper transcription", "text"),
-    "lyrics_language": ("Detected (or provided) lyric language, ISO 639-1", "text"),
+    "lyrics_language": ("Detected (or provided) lyric language, ISO 639-1; empty when Whisper kept < 10 words", "text"),
     "lyrics_language_prob": ("Whisper language-identification probability", "0-1"),
     "lyrics_beam_size": ("Whisper beam size used (auto: 5 with >= 12 GB RAM, else 1)", "count"),
     "lyrics_n_words": ("Number of words", "count"),
@@ -161,6 +161,9 @@ def extract(track: Track, cfg: dict) -> dict:
     else:
         return out
     out.update(text_features(lines, lang if isinstance(lang, str) else None))
+    if out["lyrics_source"] == "whisper" and out.get("lyrics_n_words", 0) < 10:
+        # Whisper always guesses a language, even for humming or a choir; without words it means nothing
+        out["lyrics_language"], out["lyrics_language_prob"] = NAN, NAN
     vs = track.get("vocal_seconds", lambda: NAN)
     if np.isfinite(vs) and vs > 0 and out.get("lyrics_n_words", 0):
         text = " ".join(lines)

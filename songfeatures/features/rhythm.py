@@ -24,7 +24,10 @@ FEATURES = {
     "onset_rate_per_s": ("Detected note/drum onsets per second; event density", "1/s"),
     "ioi_entropy_bits": ("Entropy of inter-onset-interval histogram (20 ms bins); rhythmic irregularity", "bits"),
     "beat_tracker": ("Beat tracking backend used (librosa or beat_this)", "text"),
-    "beats_per_bar": ("Median beats between downbeats (meter, e.g. 3 or 4); needs beat_tracker=beat_this or meter_backend=beat_this", "beats"),
+    "beats_per_bar": ("Beats per bar from Beat This! downbeats (2-7): the bar length whose beat grid best lines up "
+                      "with the detected downbeats; needs beat_tracker=beat_this or meter_backend=beat_this", "beats"),
+    "beats_per_bar_confidence": ("How well the detected downbeats line up with that bar grid, above chance "
+                                 "(1 = all on the grid; low = unclear meter or many spurious downbeats)", "0-1"),
     "meter_backend_error": ("Error message if the optional Beat This! meter backend failed (empty if fine)", "text"),
     "time_signature_est": ("Estimated beats per bar (3 or 4) from beat-level periodicity of bass onsets, onsets and "
                            "chord changes; 4 unless triple meter is clearly stronger (2/4 and 4/4 both give 4)", "3/4"),
@@ -84,6 +87,38 @@ def estimate_meter(track: Track, margin: float = 0.1):
     return (3 if s3 - s4 > margin else 4), float(s3 - s4)
 
 
+def meter_from_downbeats(beats: np.ndarray, downbeats: np.ndarray, tol: float = 0.07, window: int = 16,
+                         candidates=(2, 3, 4, 5, 6, 7)) -> tuple[float, float]:
+    """Bar length from beats + downbeats that tolerates spurious downbeats and dropped beats. (Beat This!
+    without its DBN post-processing often marks extra downbeats, so the median number of beats between
+    downbeats collapses to 1.) Each downbeat is snapped to its beat index; for every pair of downbeats at most
+    `window` beats apart, the distance in beats should be a multiple of the bar length m. The share of such
+    pairs is rescaled against chance (1/m): lift = (share - 1/m) / (1 - 1/m), so spurious downbeats do not
+    favour short bars, and only nearby pairs are used, so a dropped beat does not shift the grid for the rest
+    of the song. Clean 4/4 gives lift 1 for both 2 and 4, so the longest bar length within 95% of the best
+    lift is chosen. Returns (beats per bar, lift)."""
+    beats, downbeats = np.asarray(beats, float), np.asarray(downbeats, float)
+    if beats.size < 8 or downbeats.size < 3:
+        return NAN, NAN
+    # distances in beats from time / local beat period (robust to single extra or missing beats);
+    # the local period is the median inter-beat interval of the 9 beats around each downbeat
+    ibi = np.diff(beats)
+    k = np.clip(np.searchsorted(beats, downbeats), 0, ibi.size - 1)
+    period = np.array([np.median(ibi[max(0, i - 4):i + 5]) for i in k])
+    x = (downbeats[None, :] - downbeats[:, None]) / period[:, None]
+    near = (x > 0.5) & (x <= window + 0.5)
+    r = np.round(x[near])
+    d = r[np.abs(x[near] - r) <= tol / np.broadcast_to(period[:, None], x.shape)[near]].astype(int)
+    if d.size < 3:
+        return NAN, NAN
+    lift = {m: (np.mean(d % m == 0) - 1 / m) / (1 - 1 / m) for m in candidates}
+    best = max(lift.values())
+    if best <= 0:
+        return NAN, 0.0
+    m = max(k for k, v in lift.items() if v >= 0.95 * best)
+    return float(m), float(lift[m])
+
+
 def extract(track: Track, cfg: dict) -> dict:
     import librosa
 
@@ -102,8 +137,8 @@ def extract(track: Track, cfg: dict) -> dict:
         except Exception as e:  # optional backend: never fail the module
             out["meter_backend_error"] = f"{type(e).__name__}: {e}"[:200]
     if db is not None and len(db) >= 3:
-        counts = [np.sum((bt_meter >= a) & (bt_meter < b)) for a, b in zip(db[:-1], db[1:])]
-        out["beats_per_bar"] = float(np.median(counts))
+        bpb, conf = meter_from_downbeats(bt_meter, db)
+        out["beats_per_bar"], out["beats_per_bar_confidence"] = bpb, conf
 
     ibi = np.diff(bt)
     if ibi.size >= 4:

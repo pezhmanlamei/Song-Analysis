@@ -88,11 +88,13 @@ def main(res: Path, manifest: Path, out: Path):
             checks.append(("CLAP live-vs-studio margin, albums titled 'Live' vs others (higher = more live)",
                            f"{dc[live].clap_ref_live_margin.mean():.3f} (n={int(live.sum())}) vs "
                            f"{dc[~live].clap_ref_live_margin.mean():.3f} (n={int((~live).sum())})"))
-    if "time_signature_est" in d and "beats_per_bar" in d:
-        both = d[d.beats_per_bar.notna() & d.time_signature_est.notna()]
-        if len(both):
-            checks.append(("Meter: Beat This! beats_per_bar = periodicity estimate",
-                           f"{int((both.beats_per_bar == both.time_signature_est).sum())}/{len(both)}"))
+    if "beats_per_bar_confidence" in d:
+        clear = d[d.beats_per_bar_confidence >= 0.5]
+        checks.append(("Meter: songs with a clear Beat This! bar grid (confidence >= 0.5; else the periodicity "
+                       "estimate is used)", f"{len(clear)}/{int(d.beats_per_bar.notna().sum())}"))
+        if len(clear) and "open_time_signature" in d:
+            checks.append(("... of these, Spotify-scale meter = periodicity estimate",
+                           f"{int((clear.open_time_signature == clear.time_signature_est).sum())}/{len(clear)}"))
     if "vocal_detectors_disagree" in d:
         checks.append(("Songs where separation and the voice model disagree on vocals (listen to these)",
                        f"{int((d.vocal_detectors_disagree == 1).sum())}/{int(d.vocal_detectors_disagree.notna().sum())}"))
