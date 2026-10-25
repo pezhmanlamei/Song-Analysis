@@ -164,7 +164,13 @@ def extract(track: Track, cfg: dict) -> dict:
     if out["lyrics_source"] == "whisper" and out.get("lyrics_n_words", 0) < 10:
         # Whisper always guesses a language, even for humming or a choir; without words it means nothing
         out["lyrics_language"], out["lyrics_language_prob"] = NAN, NAN
-    vs = track.get("vocal_seconds", lambda: NAN)
+    # vocal seconds from the shared (cached) vocal-activity mask: the vocals module may have run in another
+    # process, so its in-memory value is not available here
+    vs = NAN
+    if out["lyrics_source"] == "whisper":
+        from ..audio import HOP, SR
+        vs = float(va["active"].sum() * HOP / SR)
+    vs = track.get("vocal_seconds", lambda: vs)
     if np.isfinite(vs) and vs > 0 and out.get("lyrics_n_words", 0):
         text = " ".join(lines)
         out["lyrics_words_per_vocal_s"] = out["lyrics_n_words"] / vs
