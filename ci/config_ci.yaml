@@ -42,7 +42,7 @@ structure:
   min_section_beats: 8
   drop_db: 6.0
 vocals:
-  demucs_model: htdemucs_ft
+  demucs_model: htdemucs      # single model, ~4x faster than htdemucs_ft (bag of 4)
   demucs_shifts: 1
   keep_stems: vocals
   vocal_rel_db: -15.0

@@ -94,12 +94,32 @@ def download(cfg: dict, heads: list[str] | None = None):
             url = BASE + sub + name
             print("downloading", url)
             try:
-                urllib.request.urlretrieve(url, target)
+                _download(url, target)
             except Exception as e:  # a head may have been renamed upstream
                 failed.append(url)
                 print(f"  WARNING: could not download ({e}); this head will be skipped. "
                       "Check https://essentia.upf.edu/models.html and update HEADS if renamed.")
     return d, failed
+
+
+def _download(url: str, target: Path, timeout: float = 60, tries: int = 3):
+    """Download with a socket timeout and retries; write to .part first so an interrupted
+    download is never mistaken for a complete model file."""
+    import shutil
+    import time
+    import urllib.request
+    part = target.with_name(target.name + ".part")
+    for i in range(tries):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r, open(part, "wb") as f:
+                shutil.copyfileobj(r, f)
+            part.replace(target)
+            return
+        except Exception:
+            part.unlink(missing_ok=True)
+            if i == tries - 1:
+                raise
+            time.sleep(5 * (i + 1))
 
 
 def _meta(path: Path) -> dict:

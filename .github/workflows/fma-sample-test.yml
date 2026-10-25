@@ -84,7 +84,12 @@ jobs:
           fail-on-cache-miss: true
       - name: Install
         run: bash ci/install.sh
-      - name: Download this shard's songs (verified by SHA-256)
+      - name: Restore this shard's songs
+        uses: actions/cache@v4
+        with:
+          path: ci/fma_sample/audio
+          key: fma-audio-${{ hashFiles('ci/fma_sample/manifest.csv') }}-shard${{ matrix.shard }}of${{ env.SHARDS }}
+      - name: Download this shard's songs (verified by SHA-256; skips songs already present)
         run: python ci/fetch_fma_sample.py --manifest ci/fma_sample/manifest.csv --shard ${{ matrix.shard }}/${{ env.SHARDS }}
       - name: Extract features
         run: |
