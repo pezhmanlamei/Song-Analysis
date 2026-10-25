@@ -71,6 +71,9 @@ lyrics:
   language: null            # null = auto-detect; or e.g. "en", "tr"
   max_no_speech_prob: 0.6
   min_avg_logprob: -1.0
+  vocal_only: true          # transcribe only the vocal passages found by the vocals module (recommended)
+  whisper_vad: false        # Whisper's own VAD is a speech detector and drops most singing: keep false
+  beam_size: auto           # auto = 5 with >= 12 GB RAM, else 1
 
 essentia_models:
   essentia_model_dir: models/essentia
