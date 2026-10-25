@@ -69,8 +69,8 @@ lyrics:
   transcribe: true
   whisper_model: large-v3   # large-v3 (GPU) | medium | small (CPU-friendly)
   language: null            # null = auto-detect; or e.g. "en", "tr"
-  max_no_speech_prob: 0.6
-  min_avg_logprob: -1.0
+  max_no_speech_prob: 0.6   # a segment is dropped only if above this AND word-sparse (< 1 word/s)
+  min_avg_logprob: -1.0     # segments with lower mean log-probability are dropped
   vocal_only: true          # transcribe only the vocal passages found by the vocals module (recommended)
   whisper_vad: false        # Whisper's own VAD is a speech detector and drops most singing: keep false
   beam_size: auto           # auto = 5 with >= 12 GB RAM, else 1

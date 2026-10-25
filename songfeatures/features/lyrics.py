@@ -122,33 +122,37 @@ HALLUCINATION_RE = re.compile(
     r"|transcript|subtitles?|captions?|amara\.org|subscribe|\u00a9|\u266a|\u00b6", re.IGNORECASE)
 
 
-def vocal_only_audio(audio16: np.ndarray, active: np.ndarray, frame_s: float, pad_s: float = 0.25,
-                     merge_gap_s: float = 1.0, gap_s: float = 0.3) -> np.ndarray:
-    """Concatenate the vocal-active passages (from the pipeline's own detector) with short silences.
-    Whisper then hears only singing, so its language detection (first 30 s) is not fooled by an
-    instrumental intro and it has no long instrumental stretches to hallucinate on."""
+def vocal_clips(active: np.ndarray, frame_s: float, pad_s: float = 0.25, merge_gap_s: float = 1.0) -> list[float]:
+    """Vocal-active passages (from the pipeline's own detector) as Whisper clip_timestamps
+    [start1, end1, start2, end2, ...] in seconds: short gaps merged, each passage padded."""
     runs, start = [], None
     for i, a in enumerate(np.r_[active.astype(bool), False]):
         if a and start is None:
             start = i
         elif not a and start is not None:
-            runs.append([start * frame_s - pad_s, i * frame_s + pad_s]); start = None
+            runs.append([max(0.0, start * frame_s - pad_s), i * frame_s + pad_s]); start = None
     merged = []
     for a, b in runs:
         if merged and a - merged[-1][1] < merge_gap_s:
             merged[-1][1] = b
         else:
             merged.append([a, b])
-    sr, gap = 16000, np.zeros(int(0.3 * 16000), dtype=np.float32)
-    parts = []
-    for a, b in merged:
-        seg = audio16[max(0, int(a * sr)):min(len(audio16), int(b * sr))]
-        if seg.size:
-            parts += [seg, gap]
-    return np.concatenate(parts) if parts else audio16[:0]
+    return [round(x, 2) for ab in merged for x in ab]
 
 
-def transcribe(audio16: np.ndarray, cfg: dict):
+def keep_segment(seg, cfg: dict) -> bool:
+    """Keep a Whisper segment unless it is low-confidence or looks invented. Whisper's no-speech
+    probability is often high for real singing over music, so it is not used on its own (that dropped
+    whole verses of correct lyrics); a 'no speech' segment is dropped only when it is also word-sparse
+    (< 1 word/s, the signature of text invented over a whole 30-s window)."""
+    text = seg.text.strip()
+    if seg.avg_logprob <= cfg.get("min_avg_logprob", -1.0) or HALLUCINATION_RE.search(text):
+        return False
+    rate = len(WORD_RE.findall(text)) / max(seg.end - seg.start, 0.1)
+    return not (seg.no_speech_prob > cfg.get("max_no_speech_prob", 0.6) and rate < 1.0)
+
+
+def transcribe(audio16: np.ndarray, cfg: dict, clips: list[float] | None = None):
     global _WHISPER
     from faster_whisper import WhisperModel
     if _WHISPER is None:
@@ -158,13 +162,13 @@ def transcribe(audio16: np.ndarray, cfg: dict):
             dev = "cuda" if torch.cuda.is_available() else "cpu"
         _WHISPER = WhisperModel(cfg.get("whisper_model", "large-v3"), device=dev,
                                 compute_type="float16" if dev == "cuda" else "int8")
-    # vad_filter stays off: Whisper's Silero VAD is a speech detector and discards most singing
+    # Whisper's own VAD stays off: it is a speech detector and discards most singing. Instead it is
+    # given the vocal passages found by the vocals module (clip_timestamps, on the song's own timeline).
+    kw = {"clip_timestamps": clips} if clips else {}
     segments, info = _WHISPER.transcribe(audio16, language=cfg.get("language") or None, beam_size=beam_size(cfg),
                                          vad_filter=bool(cfg.get("whisper_vad", False)), word_timestamps=False,
-                                         condition_on_previous_text=False)
-    lines = [s.text.strip() for s in segments
-             if s.no_speech_prob < cfg.get("max_no_speech_prob", 0.6) and s.avg_logprob > cfg.get("min_avg_logprob", -1.0)
-             and not HALLUCINATION_RE.search(s.text.strip())]
+                                         condition_on_previous_text=False, **kw)
+    lines = [s.text.strip() for s in segments if keep_segment(s, cfg)]
     return lines, info.language, float(info.language_probability)
 
 
@@ -185,10 +189,11 @@ def extract(track: Track, cfg: dict) -> dict:
             out.update(lyrics_source="instrumental", lyrics_n_words=0)
             return out
         a16 = librosa.resample(va["v_hi"].astype(np.float32), orig_sr=SR_HI, target_sr=16000)
+        clips = None
         if cfg.get("vocal_only", True):
             from ..audio import HOP, SR
-            a16 = vocal_only_audio(a16, va["active"], HOP / SR)
-        lines, lang, prob = transcribe(a16, cfg)
+            clips = vocal_clips(va["active"], HOP / SR)
+        lines, lang, prob = transcribe(a16, cfg, clips)
         out.update(lyrics_source="whisper", lyrics_language=lang, lyrics_language_prob=prob,
                    lyrics_beam_size=beam_size(cfg))
         if track.artifact_dir is not None:
