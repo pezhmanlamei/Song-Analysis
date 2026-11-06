@@ -146,3 +146,5 @@ Earlier test: 13 country songs from the university set, run locally; findings fe
 - `Song_Feature_Groups.xlsx`: every module's feature groups, counts, explanations, Spotify
   availability and code links.
 - `fma_test_report.md`: report of the latest 100-song FMA run.
+- `Feature_Reduction.xlsx`: redundancy analysis on the 100 FMA songs: a 63-feature core analysis set
+  (no pair |rho| >= 0.8, all VIF < 10), PCA blocks, redundant pairs and a recommendation per feature.
